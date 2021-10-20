@@ -1,0 +1,22 @@
+{
+  "gradualProb": {
+    "nodes": 400,
+    "avgDeg": 9,
+    "seed_size": 5,
+    "graphs-overlap": 0.6,
+    "smooth": 50,
+    "parallel": true,
+    "threads": 8,
+    "evaluate_prints": true,
+
+    "relevantGraphs": ["fb-pages-media.edges", "soc-brightkite.mtx", "soc-epinions.mtx",
+    "soc-gemsec-HU.edges", "soc-sign-Slashdot081106.mtx", "deezer_europe_edges.txt"],
+    "relevantSeeds": [25, 200, 50, 150, 25, 60],
+    "correntGraph": 0,
+
+    "directory": "data//",
+    "path": "KAKI.txt",
+    "plot_dir": "directory for plots"
+
+  }
+}
