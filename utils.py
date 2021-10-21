@@ -2,7 +2,7 @@ import networkx
 import random
 import matplotlib.pyplot as plt
 import myQueue
-from shoval.our_embeddings_methods.static_embeddings import *
+# from shoval.our_embeddings_methods.static_embeddings import *
 import math
 import numpy as np
 
