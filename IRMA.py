@@ -1,15 +1,14 @@
 import json
 import pprint
-import random
 import utils
 import myQueue
 import time
 import math
-import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import threading
 import functools
+import os
 
 
 class Pair:
@@ -56,7 +55,7 @@ def generic_plot(x, y, title, file_name):
 
 
 class IRMA:
-    def __init__(self, graph1, graph2, sources, params, nodes_to_match):
+    def __init__(self, graph1, graph2, sources, params, nodes_to_match, graph1s_candidates={}, graph2s_candidates={}):
         self.A, self.Z = set(), set()
         self.graph1 = graph1
         self.graph2 = graph2
@@ -68,6 +67,7 @@ class IRMA:
         self.M, self.unM = {}, {}
         self.pairs_dic = {}
         self.nodes_to_match = nodes_to_match
+        self.graph1s_candidates, self.graph2s_candidates = graph1s_candidates, graph2s_candidates
         self.f1_array, self.recall_array, self.precision_array, self.count_edges_array = [], [], [], []
 
     def expand_when_stuck(self):
@@ -193,16 +193,25 @@ class IRMA:
                 if graph1Neighbor not in result:
                     result[graph1Neighbor] = {}
                 for graph2Neighbor in self.graph2[pair.b]:
-                    if graph2Neighbor not in result[graph1Neighbor]:
-                        result[graph1Neighbor][graph2Neighbor] = 0
-                    result[graph1Neighbor][graph2Neighbor] += 1
+                    if self.is_sync_with_candidates(graph1Neighbor, graph2Neighbor):
+                        if graph2Neighbor not in result[graph1Neighbor]:
+                            result[graph1Neighbor][graph2Neighbor] = 0
+                        result[graph1Neighbor][graph2Neighbor] += 1
         results[thread_num] = result
 
     def spread_pair_marks(self, recommends_pair):
         for graph1Neighbor in graph1[recommends_pair.a]:
             for graph2Neighbor in graph2[recommends_pair.b]:
-                pair_to_update = Pair(graph1Neighbor, graph2Neighbor)
-                self.add_mark(pair_to_update)
+                if self.is_sync_with_candidates(graph1Neighbor, graph2Neighbor):
+                    pair_to_update = Pair(graph1Neighbor, graph2Neighbor)
+                    self.add_mark(pair_to_update)
+
+    def is_sync_with_candidates(self, node1, node2):
+        if node1 in self.graph1s_candidates and node2 not in self.graph1s_candidates[node1]:
+            return False
+        if node2 in self.graph2s_candidates and node1 not in self.graph2s_candidates[node2]:
+            return False
+        return True
 
     def add_mark(self, pair, num=1):
         if pair.a not in self.pairs_dic:
@@ -385,14 +394,14 @@ class IRMA:
             print(f"correct: {count_correct}")
             print(f"precision: {round(100 * precision, 3)}")
             print(f"recall: {round(100 * recall, 3)}")
-            print(f"f1: {round(100*f1, 3)}")
+            print(f"f1: {round(100 * f1, 3)}")
             print(f"num of correct edges: {count_edges}")
             if len(self.count_edges_array) > 1:
                 print(f"ratio of edges: {round(self.count_edges_array[-1] / (1 + self.count_edges_array[-2]), 3)}")
             print("***************\n")
         return count_correct
 
-    def draw_graph(self, loop, proj):
+    def draw_graph(self, loop, proj, noisy_loop):
         for u in self.graph1:
             if u not in proj:
                 continue
@@ -407,26 +416,29 @@ class IRMA:
                     continue
                 plt.plot([proj[u][0], proj[v][0]], [proj[u][1], proj[v][1]], color='gray', alpha=0.1)
         iteration = "ExpandWhenStuck" if loop == 0 else f"Iteration {loop}"
+        if noisy_loop:
+            iteration += " (noisy)"
         plt.title(f"{iteration}, recall={self.recall_array[-1]}, precision={self.precision_array[-1]}")
         # plt.show()
-        plt.savefig(f"visual_map{loop}")
+        plt.savefig(self.params["draw_dir"] + f"/visual_map{loop}")
         plt.clf()
 
     def run_IRMA(self):
         # proj = utils.create_proj(self.graph1)
+        # os.mkdir(self.params["draw_dir"])
         count_loops, count_reduce = 0, 1
         self.expand_when_stuck()
         self.evaluate()
-
         noisy_loop, reduce_stage, expand_stage = False, False, True
+        # self.draw_graph(count_loops, proj, noisy_loop)
         while noisy_loop or expand_stage or reduce_stage:
-            # self.draw_graph(count_loops, proj)
             if noisy_loop:
                 print("noisy loop")
             print(f"loop = {count_loops}\n")
             self.prepare_to_iteration()
             self.repairing_iteration(noisy_loop)
             self.evaluate()
+            # self.draw_graph(count_loops, proj, noisy_loop)
             count_loops += 1
 
             if expand_stage:
@@ -440,41 +452,32 @@ class IRMA:
                 count_reduce += 1
 
 
-params = json.load(open('config.json'))["gradualProb"]
+params = json.load(open('config.json'))
 # random.seed(1000)
-# print(params["plotDir"])
 # os.mkdir(params["plotDir"])
-graph_num = params["correntGraph"]
-# params["seed_size"] = params["relevantSeeds"][graph_num] #################
-params["path"] = params["relevantGraphs"][graph_num]
-original_seed = params["relevantSeeds"][params["correntGraph"]]  # params["seed_size"]
-for seed in [1]:  # 1, 3, 5, 10,
-    seed_f1, seed_recall, seed_precision, seed_count_edges, seed_diff_m = [], [], [], [], []
-    params["seed_size"] = int(seed * original_seed)
-    s_array = [0.6]
-    for s in s_array:
-        params["graphs-overlap"] = s
-        graph1, graph2, sources, params, nodes_to_match = utils.generate_graphs(params)
-        # graph1, graph2, sources, params, nodes_to_match = utils.generate_file_graphs(params)
-        pprint.pprint(params)
-        myIRMA = IRMA(graph1, graph2, sources, params, nodes_to_match)
-        start = time.time()
-        myIRMA.run_IRMA()
+if params["use_file_graph"]:
+    graph_num = params["graph_number"]
+    params["file_graph_name"] = params["file_graphs"][graph_num]
+    params["seed_size"] = params["file_graphs_seeds"][graph_num]
+    graph1, graph2, sources, params, nodes_to_match = utils.generate_file_graphs(params)
+else:
+    # utils.generate_graphs generates a fully random graphs. can be easily adjusted to erdos-reny / power-law graphs
+    graph1, graph2, sources, params, nodes_to_match = utils.generate_graphs(params)
 
-        print(f"S = {s}, seed={int(seed * original_seed)}:")
-        print(myIRMA.f1_array)
-        print(f"time: {str(time.time() - start)}\n\n")
-        seed_count_edges.append(myIRMA.count_edges_array)
-        seed_f1.append(myIRMA.f1_array)
-        seed_recall.append(myIRMA.recall_array)
-        seed_precision.append(myIRMA.precision_array)
+s, seed = params["graphs-overlap"], params["seed_size"]
+pprint.pprint(params)
 
-    print(f"seed = {int(seed * original_seed)}:")
-    for i in range(len(s_array)):
-        print(f"\"{s_array[i]}\": [")
-        print(str(seed_count_edges[i]) + ",")
-        print(str(seed_precision[i]) + ",")
-        print(str(seed_recall[i]) + ",")
-        last_comma = "" if i == len(s_array) - 1 else ","
-        print(str(seed_f1[i]) + "]" + last_comma)
-        print("\n\n")
+candidates = {} #utils.example_candidates(graph1)
+# The code also support a theoretical scenario where some of the nodes are known to have only limited options of maps
+myIRMA = IRMA(graph1, graph2, sources, params, nodes_to_match, graph1s_candidates=candidates)
+start = time.time()
+myIRMA.run_IRMA()
+
+print(f"S = {s}, seed={seed}:")
+print(f"time: {str(time.time() - start)}\n")
+
+print("arrays of correct edges, recall, precision and F1 by iterations:")
+print(str(myIRMA.count_edges_array) + ",")
+print(str(myIRMA.recall_array) + ",")
+print(str(myIRMA.precision_array) + ",")
+print(str(myIRMA.f1_array) + "]")

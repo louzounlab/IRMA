@@ -2,7 +2,7 @@ import networkx
 import random
 import matplotlib.pyplot as plt
 import myQueue
-# from shoval.our_embeddings_methods.static_embeddings import *
+from shoval.our_embeddings_methods.static_embeddings import *
 import math
 import numpy as np
 
@@ -23,7 +23,7 @@ def graph_from_file(path):
 
 
 def generate_file_graphs(params):
-    graph = graph_from_file(params["directory"] + params["path"])
+    graph = graph_from_file(params["graphs_directory"] + params["file_graph_name"])
     s = params["graphs-overlap"]
     graph1, graph2 = remove_networkx_edges(graph, s)
     sources = choose_seeds_file_graph(graph, graph1, graph2, params["seed_size"])
@@ -64,13 +64,13 @@ def print_graphs_info(graph, graph1, graph2, params, sources):
     print(f"nodes with degree 1 {degree_one_counter}")
     print("seed: " + str(len(sources)))
     params["nodes"] = len(graph1.nodes)
-    params["avgDeg"] = 2 * len(graph1.edges()) / len(graph1.nodes)
+    params["avg_deg"] = 2 * len(graph1.edges()) / len(graph1.nodes)
     return graph1, graph2, sources, params, nodes_to_match
 
 
 def generate_graphs(params):
-    graph = networkx.powerlaw_cluster_graph(params["nodes"], m=int(params["avgDeg"] * 0.5), p=0.1)
-    # graph = networkx.erdos_renyi_graph(params["nodes"], params["avgDeg"]/params["nodes"])
+    # graph = networkx.powerlaw_cluster_graph(params["nodes"], m=int(params["avg_deg"] * 0.5), p=0.1)
+    graph = networkx.erdos_renyi_graph(params["nodes"], params["avg_deg"] / params["nodes"])
     s = params["graphs-overlap"]
     graph1, graph2 = remove_networkx_edges(graph, s)
     sources = choose_seeds2(graph1, graph2, params["seed_size"])
@@ -88,6 +88,13 @@ def remove_networkx_edges(graph, s):
                 new_graph.add_node(int(edge[1]))
                 new_graph.add_edge(int(edge[0]), int(edge[1]))
     return two_graphs[0], two_graphs[1]
+
+
+def example_candidates(graph1):
+    candidates = {}
+    for node in graph1:
+        candidates[node] = [node + i for i in range(-10, 10)]
+        return candidates
 
 
 def choose_high_deg_sources(graph, graph1, graph2, percent):
