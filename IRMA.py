@@ -68,9 +68,11 @@ class IRMA:
         self.pairs_dic = {}
         self.nodes_to_match = nodes_to_match
         self.graph1s_candidates, self.graph2s_candidates = graph1s_candidates, graph2s_candidates
-        self.f1_array, self.recall_array, self.precision_array, self.count_edges_array = [], [], [], []
+        self.f1_array, self.recall_array, self.precision_array, self.count_edges_array, self.iteration_time_array = [], [], [], [], []
+        self.iteration_start_time = 0
 
     def expand_when_stuck(self):
+        self.iteration_start_time = time.time()
         if self.params["parallel"]:
             return self.expand_when_stuck_parallel()
         threshold = 1000
@@ -126,7 +128,7 @@ class IRMA:
             if pair.a not in self.M and pair.b not in self.unM:
                 self.add_pair_to_map(pair)
                 self.spread_pair_marks(pair)
-        print(f"end of loop. time: {time.time() - start}. took {round(time.time() - time_start_loop, 1)} sec")
+        print(f"end of loop. time: {round(time.time() - start)}. took {round(time.time() - time_start_loop, 1)} sec")
         return self.M
 
     def repairing_iteration_parallel(self, noisy_loop):
@@ -139,7 +141,7 @@ class IRMA:
                 self.add_pair_to_map(pair)
         pairs_array = [Pair(a, self.M[a]) for a in self.M]
         self.pairs_dic = self.count_marks_parallel(pairs_array)
-        print(f"end of loop. time: {time.time() - start}. took {round(time.time() - time_start_loop, 1)} sec")
+        print(f"end of loop. time: {round(time.time() - start)}. took {round(time.time() - time_start_loop, 1)} sec")
         return self.M
 
     def spread_array_marks(self, pairs_array):
@@ -257,6 +259,7 @@ class IRMA:
             print("done: " + str(len(self.M)))
 
     def prepare_to_iteration(self):
+        self.iteration_start_time = time.time()
         self.A, self.Z = set(), set()
         self.plots = Plots()
         self.queue = myQueue.MaxQueue()
@@ -367,6 +370,7 @@ class IRMA:
         generic_plot(x, y, title, file_name)
 
     def evaluate(self):
+        iteration_time = round(time.time() - self.iteration_start_time)
         count_correct = 0
         for a in self.M:
             if a == self.M[a]:
@@ -387,6 +391,7 @@ class IRMA:
         self.recall_array.append(round(recall * 100, 2))
         self.precision_array.append(round(precision * 100, 2))
         self.count_edges_array.append(count_edges)
+        self.iteration_time_array.append(iteration_time)
         if params["evaluate_prints"]:
             print("**evaluate**")
             print(f"should match: {self.nodes_to_match}")
@@ -434,7 +439,7 @@ class IRMA:
         while noisy_loop or expand_stage or reduce_stage:
             if noisy_loop:
                 print("noisy loop")
-            print(f"loop = {count_loops}\n")
+            print(f"\nloop = {count_loops}")
             self.prepare_to_iteration()
             self.repairing_iteration(noisy_loop)
             self.evaluate()
@@ -442,8 +447,8 @@ class IRMA:
             count_loops += 1
 
             if expand_stage:
-                if count_loops > 3 and self.count_edges_array[-1] < self.count_edges_array[-2] * 1.02:
-                    expand_stage, noisy_loop = False, True
+                if count_loops >= 5: #and self.count_edges_array[-1] < self.count_edges_array[-2] * 1.02:
+                    expand_stage, noisy_loop = False, False
             elif noisy_loop:
                 noisy_loop, reduce_stage, = False, True
             elif reduce_stage:
@@ -455,29 +460,48 @@ class IRMA:
 params = json.load(open('config.json'))
 # random.seed(1000)
 # os.mkdir(params["plotDir"])
-if params["use_file_graph"]:
-    graph_num = params["graph_number"]
-    params["file_graph_name"] = params["file_graphs"][graph_num]
-    params["seed_size"] = params["file_graphs_seeds"][graph_num]
-    graph1, graph2, sources, params, nodes_to_match = utils.generate_file_graphs(params)
-else:
-    # utils.generate_graphs generates a fully random graphs. can be easily adjusted to erdos-reny / power-law graphs
-    graph1, graph2, sources, params, nodes_to_match = utils.generate_graphs(params)
+params["graphs-overlap"] = params["file_graphs_s"][params["graph_number"]]
+for seed_mul in [1,2,4,8,16]:
+    a,b,c,d,e = np.array([0.0,0.0,0.0,0.0,0.0,0.0]), np.array([0.0,0.0,0.0,0.0,0.0,0.0]), np.array([0.0,0.0,0.0,0.0,0.0,0.0]), np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),np.array([0.0,0.0,0.0,0.0,0.0,0.0])
+    for i in range(5):
+        if params["use_file_graph"]:
+            graph_num = params["graph_number"]
+            params["file_graph_name"] = params["file_graphs"][graph_num]
+            params["seed_size"] = params["file_graphs_seeds"][graph_num]*seed_mul
+            graph1, graph2, sources, params, nodes_to_match = utils.generate_file_graphs(params)
+        else:
+            # utils.generate_graphs generates a fully random graphs. can be easily adjusted to erdos-reny / power-law graphs
+            graph1, graph2, sources, params, nodes_to_match = utils.generate_graphs(params)
 
-s, seed = params["graphs-overlap"], params["seed_size"]
-pprint.pprint(params)
+        s, seed = params["graphs-overlap"], params["seed_size"]
+        pprint.pprint(params)
 
-candidates = {} #utils.example_candidates(graph1)
-# The code also support a theoretical scenario where some of the nodes are known to have only limited options of maps
-myIRMA = IRMA(graph1, graph2, sources, params, nodes_to_match, graph1s_candidates=candidates)
-start = time.time()
-myIRMA.run_IRMA()
+        candidates = {} #utils.example_candidates(graph1)
+        # The code also supports a theoretical scenario where some of the nodes are known to have only limited options of maps
+        myIRMA = IRMA(graph1, graph2, sources, params, nodes_to_match, graph1s_candidates=candidates)
+        start = time.time()
+        myIRMA.run_IRMA()
 
-print(f"S = {s}, seed={seed}:")
-print(f"time: {str(time.time() - start)}\n")
+        print(f"S = {s}, seed={seed}:")
+        print(f"time: {str(time.time() - start)}\n")
 
-print("arrays of correct edges, recall, precision and F1 by iterations:")
-print(str(myIRMA.count_edges_array) + ",")
-print(str(myIRMA.recall_array) + ",")
-print(str(myIRMA.precision_array) + ",")
-print(str(myIRMA.f1_array) + "]")
+        print("arrays of correct edges, recall, precision and F1 by iterations:")
+        print(str(myIRMA.iteration_time_array) + ",")
+        print(str(myIRMA.count_edges_array) + ",")
+        print(str(myIRMA.recall_array) + ",")
+        print(str(myIRMA.precision_array) + ",")
+        print(str(myIRMA.f1_array) + "]")
+        a += myIRMA.iteration_time_array
+        b += myIRMA.count_edges_array
+        c += myIRMA.recall_array
+        d += myIRMA.precision_array
+        e += myIRMA.f1_array
+    print("\nAVG of all 5:")
+    print(str(a/5)+ ",")
+    print(str(b/5)+ ",")
+    print(str(c/5)+ ",")
+    print(str(d/5)+ ",")
+    print(str(e/5)+ ",")
+
+
+
