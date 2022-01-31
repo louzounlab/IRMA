@@ -8,7 +8,7 @@
   "threads": 8,
   "evaluate_prints": true,
 
-  "use_file_graph": true,
+  "use_file_graph": false,
   "graph_number": 5,
   "file_graphs": ["fb-pages-media.edges", "soc-brightkite.mtx", "soc-epinions.mtx",
   "soc-gemsec-HU.edges", "soc-sign-Slashdot081106.mtx", "deezer_europe_edges.txt"],

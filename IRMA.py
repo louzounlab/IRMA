@@ -461,14 +461,15 @@ if params["use_file_graph"]:
     params["seed_size"] = params["file_graphs_seeds"][graph_num]
     graph1, graph2, sources, params, nodes_to_match = utils.generate_file_graphs(params)
 else:
-    # utils.generate_graphs generates a fully random graphs. can be easily adjusted to erdos-reny / power-law graphs
+    # utils.generate_graphs generates a fully random graphs. can be easily adjusted to power-law graphs
     graph1, graph2, sources, params, nodes_to_match = utils.generate_graphs(params)
 
 s, seed = params["graphs-overlap"], params["seed_size"]
 pprint.pprint(params)
 
-candidates = {} #utils.example_candidates(graph1)
 # The code also support a theoretical scenario where some of the nodes are known to have only limited options of maps
+candidates = {} #utils.example_candidates(graph1)
+
 myIRMA = IRMA(graph1, graph2, sources, params, nodes_to_match, graph1s_candidates=candidates)
 start = time.time()
 myIRMA.run_IRMA()
