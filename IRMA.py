@@ -1,5 +1,5 @@
-import json
-import pprint
+import sys
+
 import utils
 import myQueue
 import time
@@ -49,18 +49,34 @@ def generic_plot(x, y, title, file_name):
     plt.xlabel(x, fontsize=18, fontname="Times New Roman")
     plt.ylabel(y, fontsize=18, fontname="Times New Roman")
     plt.legend(loc="best")
-    # plt.show()
+
     plt.savefig(file_name, format='eps')
     plt.clf()
 
 
 class IRMA:
-    def __init__(self, graph1, graph2, sources, params, nodes_to_match, graph1s_candidates={}, graph2s_candidates={}):
+    def __init__(self, graph1, graph2, sources, nodes_to_match,
+                 draw_dir="./plots",
+                 graph1s_candidates={},
+                 graph2s_candidates={},
+                 parallel=False,
+                 threads=5,
+                 smooth=50,
+                 verbose=True):
+
         self.A, self.Z = set(), set()
         self.graph1 = graph1
         self.graph2 = graph2
         self.sources = sources
-        self.params = params
+
+        self.parallel = parallel
+        self.threads = threads
+        self.draw_dir = draw_dir
+        self.smooth = smooth
+
+        self.start = time.time()
+        self.verbose = verbose
+
         self.plots = Plots()
         self.queue = myQueue.MaxQueue()
         self.prev_queue = myQueue.MaxQueue()
@@ -70,15 +86,20 @@ class IRMA:
         self.graph1s_candidates, self.graph2s_candidates = graph1s_candidates, graph2s_candidates
         self.f1_array, self.recall_array, self.precision_array, self.count_edges_array = [], [], [], []
 
+    def vprint(self, msg):
+        if self.verbose:
+            print(msg)
+
     def expand_when_stuck(self):
-        if self.params["parallel"]:
+        if self.parallel:
             return self.expand_when_stuck_parallel()
         threshold = 1000
         count_loops = 0
         self.load_sources()
         while len(self.A) != 0:
             count_loops += 1
-            print(f"len(A)= {len(self.A)}")
+
+            self.vprint(f"size A = {len(self.A)}")
             self.spread_array_marks_parallel(list(self.A))
             while self.candidate_in_queues(threshold):
                 pair = self.best_candidate()
@@ -87,17 +108,18 @@ class IRMA:
                     if pair not in self.Z:
                         self.spread_pair_marks(pair)
                         self.Z.add(pair)
-            print(f"end of while {count_loops}. time: {time.time() - start}")
+
+            self.vprint(f"end of while {count_loops}. time: {round(time.time() - self.start, 1)}")
             self.update_A()
         return self.M
 
     def expand_when_stuck_parallel(self):
         last_maps = []
         threshold = 1000
-        countLoops = 0
+        count_loops = 0
         self.load_sources()
         while len(self.A) != 0:
-            countLoops += 1
+            count_loops += 1
             self.spread_array_marks_parallel(list(self.A))
             while self.candidate_in_queues(threshold) or len(last_maps) > 0:
                 if not self.candidate_in_queues(threshold):
@@ -110,13 +132,15 @@ class IRMA:
                     if pair not in self.Z:
                         last_maps.append(Pair(pair.a, pair.b))
                         self.Z.add(pair)
-            print(f"end of while {countLoops}. time: {time.time() - start}")
+
+            self.vprint(f"end of while {count_loops}. time: {round(time.time() - self.start, 1)}")
             self.update_A()
         return self.M
 
     def repairing_iteration(self, noisy_loop):
-        if self.params["parallel"]:
+        if self.parallel:
             return self.repairing_iteration_parallel(noisy_loop)
+
         time_start_loop = time.time()
         threshold = 0 if noisy_loop else 1000
         self.load_sources()
@@ -126,7 +150,9 @@ class IRMA:
             if pair.a not in self.M and pair.b not in self.unM:
                 self.add_pair_to_map(pair)
                 self.spread_pair_marks(pair)
-        print(f"end of loop. time: {time.time() - start}. took {round(time.time() - time_start_loop, 1)} sec")
+
+        self.vprint(f"end of loop. time: {round(time.time() - self.start, 1)}."
+                    f" took {round(time.time() - time_start_loop, 1)} sec")
         return self.M
 
     def repairing_iteration_parallel(self, noisy_loop):
@@ -139,7 +165,8 @@ class IRMA:
                 self.add_pair_to_map(pair)
         pairs_array = [Pair(a, self.M[a]) for a in self.M]
         self.pairs_dic = self.count_marks_parallel(pairs_array)
-        print(f"end of loop. time: {time.time() - start}. took {round(time.time() - time_start_loop, 1)} sec")
+
+        self.vprint(f"end of loop. time: {time.time() - self.start}. took {round(time.time() - time_start_loop, 1)} sec")
         return self.M
 
     def spread_array_marks(self, pairs_array):
@@ -153,7 +180,7 @@ class IRMA:
                 self.add_mark(Pair(node1, node2), new_marks[node1][node2].recommends)
 
     def count_marks_parallel(self, new_maps):
-        num = self.params["threads"]
+        num = self.threads
         results, threads = [0] * num, [0] * num
         maps = [[] for i in range(num)]
         # map_keys = [x for x in new_maps.keys()]
@@ -181,7 +208,7 @@ class IRMA:
                 my_pair = Pair(key, pair)
                 my_pair.recommends = sum
                 new_pairs_dic[key][pair] = my_pair
-                delta_degree = abs(len(graph1[key]) - len(graph2[pair]))
+                delta_degree = abs(len(self.graph1[key]) - len(self.graph2[pair]))
                 priority = 1000 * my_pair.recommends - delta_degree
                 all_pairs_array.append((priority, my_pair))
         return new_pairs_dic
@@ -200,8 +227,8 @@ class IRMA:
         results[thread_num] = result
 
     def spread_pair_marks(self, recommends_pair):
-        for graph1Neighbor in graph1[recommends_pair.a]:
-            for graph2Neighbor in graph2[recommends_pair.b]:
+        for graph1Neighbor in self.graph1[recommends_pair.a]:
+            for graph2Neighbor in self.graph2[recommends_pair.b]:
                 if self.is_sync_with_candidates(graph1Neighbor, graph2Neighbor):
                     pair_to_update = Pair(graph1Neighbor, graph2Neighbor)
                     self.add_mark(pair_to_update)
@@ -253,8 +280,6 @@ class IRMA:
         # self.update_plots(pair)
         self.M[pair.a] = pair.b
         self.unM[pair.b] = pair.a
-        if len(self.M) % 2000 == 0:
-            print("done: " + str(len(self.M)))
 
     def prepare_to_iteration(self):
         self.A, self.Z = set(), set()
@@ -317,8 +342,8 @@ class IRMA:
         pair.degree_sum = pair.a_degree + pair.b_degree
 
     def save_plots(self):
-        directory = self.params["plot_dir"]
-        smooth = self.params["smooth"]
+        directory = self.draw_dir
+        smooth = self.smooth
 
         good_pos = self.plots.correct_map_pos[0:len(utils.smooth(self.plots.correct_map_pos, smooth))]
         smoothed_wrong_map_pos = utils.smooth(self.plots.wrong_map_pos, smooth, good_pos[-1])
@@ -387,8 +412,9 @@ class IRMA:
         self.recall_array.append(round(recall * 100, 2))
         self.precision_array.append(round(precision * 100, 2))
         self.count_edges_array.append(count_edges)
-        if params["evaluate_prints"]:
-            print("**evaluate**")
+
+        if self.verbose:
+            print("------------ evaluate ------------")
             print(f"should match: {self.nodes_to_match}")
             print(f"tried: {len(self.M)}")
             print(f"correct: {count_correct}")
@@ -398,7 +424,10 @@ class IRMA:
             print(f"num of correct edges: {count_edges}")
             if len(self.count_edges_array) > 1:
                 print(f"ratio of edges: {round(self.count_edges_array[-1] / (1 + self.count_edges_array[-2]), 3)}")
-            print("***************\n")
+
+            print("----------------------------------\n")
+            sys.stdout.flush()
+
         return count_correct
 
     def draw_graph(self, loop, proj, noisy_loop):
@@ -419,13 +448,10 @@ class IRMA:
         if noisy_loop:
             iteration += " (noisy)"
         plt.title(f"{iteration}, recall={self.recall_array[-1]}, precision={self.precision_array[-1]}")
-        # plt.show()
-        plt.savefig(self.params["draw_dir"] + f"/visual_map{loop}")
+        plt.savefig(self.draw_dir + f"/visual_map{loop}")
         plt.clf()
 
     def run_IRMA(self):
-        # proj = utils.create_proj(self.graph1)
-        # os.mkdir(self.params["draw_dir"])
         count_loops, count_reduce = 0, 1
         self.expand_when_stuck()
         self.evaluate()
@@ -433,8 +459,9 @@ class IRMA:
         # self.draw_graph(count_loops, proj, noisy_loop)
         while noisy_loop or expand_stage or reduce_stage:
             if noisy_loop:
-                print("noisy loop")
-            print(f"loop = {count_loops}\n")
+                self.vprint("noisy loop")
+            self.vprint(f"loop = {count_loops}\n")
+
             self.prepare_to_iteration()
             self.repairing_iteration(noisy_loop)
             self.evaluate()
@@ -450,35 +477,3 @@ class IRMA:
                 if count_reduce > 3:
                     reduce_stage = False
                 count_reduce += 1
-
-
-params = json.load(open('config.json'))
-# random.seed(1000)
-# os.mkdir(params["plotDir"])
-if params["use_file_graph"]:
-    graph_num = params["graph_number"]
-    params["file_graph_name"] = params["file_graphs"][graph_num]
-    params["seed_size"] = params["file_graphs_seeds"][graph_num]
-    graph1, graph2, sources, params, nodes_to_match = utils.generate_file_graphs(params)
-else:
-    # utils.generate_graphs generates a fully random graphs. can be easily adjusted to power-law graphs
-    graph1, graph2, sources, params, nodes_to_match = utils.generate_graphs(params)
-
-s, seed = params["graphs-overlap"], params["seed_size"]
-pprint.pprint(params)
-
-# The code also support a theoretical scenario where some of the nodes are known to have only limited options of maps
-candidates = {} #utils.example_candidates(graph1)
-
-myIRMA = IRMA(graph1, graph2, sources, params, nodes_to_match, graph1s_candidates=candidates)
-start = time.time()
-myIRMA.run_IRMA()
-
-print(f"S = {s}, seed={seed}:")
-print(f"time: {str(time.time() - start)}\n")
-
-print("arrays of correct edges, recall, precision and F1 by iterations:")
-print(str(myIRMA.count_edges_array) + ",")
-print(str(myIRMA.recall_array) + ",")
-print(str(myIRMA.precision_array) + ",")
-print(str(myIRMA.f1_array) + "]")

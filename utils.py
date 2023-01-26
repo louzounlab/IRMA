@@ -7,27 +7,31 @@ import math
 import numpy as np
 
 
-def graph_from_file(path):
-    delimiter = " "
+def graph_from_file(path, delimiter=" "):
     graph = networkx.Graph()
-    f = open(path, "r")
-    line = f.readline()
-    while line != '':
-        edge = line.split("\n")[0].split(delimiter)
-        graph.add_node(int(edge[0]))
-        graph.add_node(int(edge[1]))
-        graph.add_edge(int(edge[0]), int(edge[1]))
+    with open(path, "r") as f:
         line = f.readline()
-    f.close()
+        while line:
+            edge = line.strip("\n").split(delimiter)
+            graph.add_edge(int(edge[0]), int(edge[1]))
+            line = f.readline()
     return graph
 
 
-def generate_file_graphs(params):
-    graph = graph_from_file(params["graphs_directory"] + params["file_graph_name"])
-    s = params["graphs-overlap"]
-    graph1, graph2 = remove_networkx_edges(graph, s)
-    sources = choose_seeds_file_graph(graph, graph1, graph2, params["seed_size"])
-    return print_graphs_info(graph, graph1, graph2, params, sources)
+def generate_file_graphs(graph_path: str, overlap: float, seed_size: float, delimiter=" "):
+    graph = graph_from_file(graph_path, delimiter=delimiter)
+    graph1, graph2 = remove_networkx_edges(graph, overlap)
+    seed_nodes = choose_seeds_file_graph(graph, graph1, graph2, seed_size)
+
+    nodes_to_match = 0
+    degree_one_counter = 0
+    for node in graph:
+        if graph1.has_node(node) and graph2.has_node(node):
+            nodes_to_match += 1
+            if len(graph1[node]) == 1 or len(graph2[node]) == 1:
+                degree_one_counter += 1
+
+    return graph1, graph2, seed_nodes, nodes_to_match
 
 
 def create_proj(graph):
@@ -113,15 +117,13 @@ def choose_high_deg_sources(graph, graph1, graph2, percent):
 def choose_seeds_file_graph(graph, graph1, graph2, percent):
     num = math.ceil(percent * len(graph.nodes)) if percent < 1 else percent
     group = []
+    nodes = list(graph.nodes)
     while len(group) < num:
-        rand = int(random.uniform(0, len(graph.nodes)))
-        source, i = 0, 0
-        for source in graph.nodes:
-            if i == rand:
-                break
-            i += 1
-        if (source not in group) and (source in graph1.nodes) and (source in graph2.nodes):
-            group.append(source)
+        rand = random.randint(0, len(graph.nodes))
+        node = nodes[rand]
+        if (node not in group) and (node in graph1.nodes) and (node in graph2.nodes):
+            group.append(node)
+
     return group
 
 
