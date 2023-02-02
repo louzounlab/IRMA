@@ -1,15 +1,17 @@
 import sys
-
-import utils
-import myQueue
-import time
-import math
-import numpy as np
-import matplotlib.pyplot as plt
-import threading
 import functools
-import os
+import math
+import threading
+import time
+import logging
 
+import matplotlib.pyplot as plt
+import numpy as np
+
+from max_queue import MaxQueue
+import utils
+
+logging.basicConfig(stream=sys.stdout, format='%(asctime)s - %(message)s', level=logging.DEBUG)
 
 class Pair:
     def __init__(self, a, b):
@@ -54,12 +56,13 @@ def generic_plot(x, y, title, file_name):
     plt.clf()
 
 
-class IRMA:
+class Irma:
     def __init__(self, graph1, graph2, sources, nodes_to_match,
                  draw_dir="./plots",
                  graph1s_candidates={},
                  graph2s_candidates={},
                  parallel=False,
+                 max_queue=1e8,
                  threads=5,
                  smooth=50,
                  verbose=True):
@@ -78,17 +81,18 @@ class IRMA:
         self.verbose = verbose
 
         self.plots = Plots()
-        self.queue = myQueue.MaxQueue()
-        self.prev_queue = myQueue.MaxQueue()
+        self.queue = MaxQueue(max_size=max_queue)
+        self.prev_queue = MaxQueue(max_size=max_queue)
         self.M, self.unM = {}, {}
         self.pairs_dic = {}
         self.nodes_to_match = nodes_to_match
         self.graph1s_candidates, self.graph2s_candidates = graph1s_candidates, graph2s_candidates
         self.f1_array, self.recall_array, self.precision_array, self.count_edges_array = [], [], [], []
+        self.times, self.M_size = [], []
 
     def vprint(self, msg):
         if self.verbose:
-            print(msg)
+            logging.info(msg)
 
     def expand_when_stuck(self):
         if self.parallel:
@@ -99,7 +103,6 @@ class IRMA:
         while len(self.A) != 0:
             count_loops += 1
 
-            self.vprint(f"size A = {len(self.A)}")
             self.spread_array_marks_parallel(list(self.A))
             while self.candidate_in_queues(threshold):
                 pair = self.best_candidate()
@@ -145,6 +148,7 @@ class IRMA:
         threshold = 0 if noisy_loop else 1000
         self.load_sources()
         self.spread_array_marks_parallel(list(self.A))
+
         while self.candidate_in_queues(threshold):
             pair = self.best_candidate()
             if pair.a not in self.M and pair.b not in self.unM:
@@ -166,7 +170,8 @@ class IRMA:
         pairs_array = [Pair(a, self.M[a]) for a in self.M]
         self.pairs_dic = self.count_marks_parallel(pairs_array)
 
-        self.vprint(f"end of loop. time: {time.time() - self.start}. took {round(time.time() - time_start_loop, 1)} sec")
+        self.vprint(
+            f"end of loop. time: {time.time() - self.start}. took {round(time.time() - time_start_loop, 1)} sec")
         return self.M
 
     def spread_array_marks(self, pairs_array):
@@ -183,7 +188,6 @@ class IRMA:
         num = self.threads
         results, threads = [0] * num, [0] * num
         maps = [[] for i in range(num)]
-        # map_keys = [x for x in new_maps.keys()]
         for i in range(len(new_maps)):
             maps[i % num].append(new_maps[i])
         for i in range(num):
@@ -191,11 +195,11 @@ class IRMA:
             threads[i].start()
         for i in range(num):
             threads[i].join()
-        allkey = functools.reduce(set.union, map(set, map(dict.keys, results)))
+        all_keys = functools.reduce(set.union, map(set, map(dict.keys, results)))
 
         new_pairs_dic = {}
         all_pairs_array = []
-        for key in allkey:
+        for key in all_keys:
             new_pairs_dic[key] = {}
             results_key = [dict_i[key] if key in dict_i else {} for dict_i in results]
             all_pairs_for_key = functools.reduce(set.union, map(set, map(dict.keys, results_key)))
@@ -284,7 +288,7 @@ class IRMA:
     def prepare_to_iteration(self):
         self.A, self.Z = set(), set()
         self.plots = Plots()
-        self.queue = myQueue.MaxQueue()
+        self.queue = MaxQueue()
         self.M, self.unM = {}, {}
         self.prev_queue = self.create_queue_by_pairs_dic(self.pairs_dic)
         self.pairs_dic = {}
@@ -296,7 +300,7 @@ class IRMA:
                 delta_deg = abs(len(self.graph1[pair.a]) - len(self.graph2[pair.b]))
                 priority = pair.recommends * 1000 - delta_deg
                 pairs_array.append((priority, pair))
-        return myQueue.MaxQueue(pairs_array)
+        return MaxQueue(pairs_array)
 
     def candidate_in_queues(self, threshold):
         return ((not self.queue.isEmpty()) and self.queue.top()[0] > threshold) or (
@@ -412,21 +416,19 @@ class IRMA:
         self.recall_array.append(round(recall * 100, 2))
         self.precision_array.append(round(precision * 100, 2))
         self.count_edges_array.append(count_edges)
+        self.M_size.append(len(self.M))
 
-        if self.verbose:
-            print("------------ evaluate ------------")
-            print(f"should match: {self.nodes_to_match}")
-            print(f"tried: {len(self.M)}")
-            print(f"correct: {count_correct}")
-            print(f"precision: {round(100 * precision, 3)}")
-            print(f"recall: {round(100 * recall, 3)}")
-            print(f"f1: {round(100 * f1, 3)}")
-            print(f"num of correct edges: {count_edges}")
-            if len(self.count_edges_array) > 1:
-                print(f"ratio of edges: {round(self.count_edges_array[-1] / (1 + self.count_edges_array[-2]), 3)}")
-
-            print("----------------------------------\n")
-            sys.stdout.flush()
+        self.vprint(
+            "\n------------ evaluate ------------\n"
+            f"Should match: {self.nodes_to_match}\n"
+            f"Tried: {len(self.M)}\n"
+            f"Correct: {count_correct}\n"
+            f"Precision: {round(100 * precision, 3)}\n"
+            f"Recall: {round(100 * recall, 3)}\n"
+            f"F1: {round(100 * f1, 3)}\n"
+            f"Num of correct edges: {count_edges}\n"
+            f"----------------------------------"
+        )
 
         return count_correct
 
@@ -451,25 +453,56 @@ class IRMA:
         plt.savefig(self.draw_dir + f"/visual_map{loop}")
         plt.clf()
 
-    def run_IRMA(self):
-        count_loops, count_reduce = 0, 1
+    def run(self, allow_noisy_loops=True, noisy_delta=0.02, max_num_of_iterations=100,
+                 min_delta=0.02):
+        """
+
+        Parameters
+        ----------
+        stopping_condition:
+            -1: the original algorithm
+            0: only expandWhenStuck
+            (0,1): stop when the improvement small then 1+ stopping condition
+            1<: number of iterations
+        allow_noisy_loops
+        noisy_delta
+        min_delta
+        max_num_of_iterations
+
+        Return
+        -------
+
+        """
+        # Runs ExpandWhenStuck algorithm
+        start_time = time.time()
         self.expand_when_stuck()
         self.evaluate()
-        noisy_loop, reduce_stage, expand_stage = False, False, True
-        # self.draw_graph(count_loops, proj, noisy_loop)
-        while noisy_loop or expand_stage or reduce_stage:
-            if noisy_loop:
-                self.vprint("noisy loop")
-            self.vprint(f"loop = {count_loops}\n")
+        self.times.append(time.time() - start_time)
 
+        if max_num_of_iterations == 0:
+            return
+
+        count_loops, count_reduce = 0, 1
+        noisy_loop, reduce_stage, expand_stage = False, False, True
+        while noisy_loop or expand_stage or reduce_stage:
+            self.vprint(f"Starts loop number {count_loops}." + " noisy loop." if noisy_loop else "")
+
+            start_time = time.time()
             self.prepare_to_iteration()
             self.repairing_iteration(noisy_loop)
             self.evaluate()
-            # self.draw_graph(count_loops, proj, noisy_loop)
+            self.times.append(time.time() - start_time)
             count_loops += 1
 
+            # Stopping conditions
+            if count_loops >= max_num_of_iterations or \
+                    self.count_edges_array[-1] < self.count_edges_array[-2] * (1 + min_delta):
+                return
+
             if expand_stage:
-                if count_loops > 3 and self.count_edges_array[-1] < self.count_edges_array[-2] * 1.02:
+                if count_loops > 3 and \
+                        allow_noisy_loops and \
+                        self.count_edges_array[-1] < self.count_edges_array[-2] * (1 + noisy_delta):
                     expand_stage, noisy_loop = False, True
             elif noisy_loop:
                 noisy_loop, reduce_stage, = False, True

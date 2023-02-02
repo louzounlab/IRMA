@@ -1,10 +1,10 @@
-import networkx
-import random
-import matplotlib.pyplot as plt
-import myQueue
-# from shoval.our_embeddings_methods.static_embeddings import *
 import math
+import random
+
+import networkx
 import numpy as np
+
+import myQueue
 
 
 def graph_from_file(path, delimiter=" "):
@@ -18,9 +18,10 @@ def graph_from_file(path, delimiter=" "):
     return graph
 
 
-def generate_file_graphs(graph_path: str, overlap: float, seed_size: float, delimiter=" "):
+def generate_file_graphs(graph_path: str, edges_overlap: float, seed_size: float, delimiter=" ", nodes_overlap=1):
     graph = graph_from_file(graph_path, delimiter=delimiter)
-    graph1, graph2 = remove_networkx_edges(graph, overlap)
+    graph1, graph2 = remove_networkx_edges(graph, edges_overlap, nodes_overlap)
+
     seed_nodes = choose_seeds_file_graph(graph, graph1, graph2, seed_size)
 
     nodes_to_match = 0
@@ -81,18 +82,45 @@ def generate_graphs(params):
     return print_graphs_info(graph, graph1, graph2, params, sources)
 
 
-def remove_networkx_edges(graph, s):
-    random.uniform(0, 1)
-    two_graphs = [networkx.Graph(), networkx.Graph()]
-    for edge in graph.edges:
-        for new_graph in two_graphs:
-            rand = random.uniform(0, 1)
-            if rand < s:
-                new_graph.add_node(int(edge[0]))
-                new_graph.add_node(int(edge[1]))
-                new_graph.add_edge(int(edge[0]), int(edge[1]))
-    return two_graphs[0], two_graphs[1]
+def remove_networkx_edges(graph, s, t=1):
+    """
+    Takes a graph and probabilities and create two new samples graphs based on the original graph.
+    Parameters
+    ----------
+    graph: networkx graph  to sample from.
+    s: the probability of edge to be included in the sample graph (in case it's nodes in the graph)
+    t: the probability of node to be included in the sample graph.
 
+    Returns
+    -------
+    Two networkx graphs
+    """
+    graph1, graph2 = networkx.Graph(), networkx.Graph()
+
+    if t == 1:
+        for (u, v) in graph.edges:
+            u, v = int(u), int(v)
+            if random.uniform(0, 1) < s:
+                graph1.add_edge(u, v)
+
+            if random.uniform(0, 1) < s:
+                graph2.add_edge(u, v)
+    else:
+        nodes1 = [int(node) for node in graph.nodes if random.uniform(0, 1) <= t]
+        nodes2 = [int(node) for node in graph.nodes if random.uniform(0, 1) <= t]
+
+        for (u, v) in graph.edges:
+            u, v = int(u), int(v)
+            if u in nodes1 and v in nodes1 and random.uniform(0, 1) < s:
+                graph1.add_edge(u, v)
+
+            if u in nodes2 and v in nodes2 and random.uniform(0, 1) < s:
+                graph2.add_edge(u, v)
+
+        del nodes1
+        del nodes2
+
+    return graph1, graph2
 
 def example_candidates(graph1):
     candidates = {}
@@ -119,7 +147,7 @@ def choose_seeds_file_graph(graph, graph1, graph2, percent):
     group = []
     nodes = list(graph.nodes)
     while len(group) < num:
-        rand = random.randint(0, len(graph.nodes))
+        rand = random.randint(0, len(nodes) - 1)
         node = nodes[rand]
         if (node not in group) and (node in graph1.nodes) and (node in graph2.nodes):
             group.append(node)

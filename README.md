@@ -1,5 +1,42 @@
 # Seeded Graph Matching
 
+
+This repo contains the code for the paper IRMA - Iterative Repair For Graph Matching.  
+The full paper can be found [here](https://arxiv.org/abs/2208.09164).
+
+### How to run
+* If you have two graphs and a seed, you may represent them as networkx graphs, and use Irma for matching:
+
+```python
+from irma.irma import IRMA
+
+graph1 = "networkx graph"
+graph2 = "networkx graph"
+nodes_to_match = []  # Just for statistics
+seed = []
+
+myIRMA = IRMA(graph1, graph2, seed, nodes_to_match)
+myIRMA.run_IRMA()
+
+```
+
+* If you have only one graph, you can simulate one more using the function generate_file_graphs in utils:
+
+```python
+
+from irma import utils
+
+file_path = "./path_to_graph"
+overlap = 0.6
+seed_size = 100
+delimiter = ","
+
+graph1, graph2, seed, nodes_to_match = utils.generate_file_graphs(file_path, overlap, seed_size, delimiter=delimiter)
+```
+
+
+
+
 This project meant to enable restoring all experiments done in IRMA paper.
 
 The code makes use of several packages as:
