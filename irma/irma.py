@@ -8,8 +8,8 @@ import logging
 import matplotlib.pyplot as plt
 import numpy as np
 
-from max_queue import MaxQueue
-import utils
+from irma.max_queue import MaxQueue
+import irma.utils as utils
 
 logging.basicConfig(stream=sys.stdout, format='%(asctime)s - %(message)s', level=logging.DEBUG)
 

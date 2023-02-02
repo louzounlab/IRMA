@@ -4,7 +4,7 @@ import random
 import networkx
 import numpy as np
 
-import myQueue
+import irma.max_queue
 
 
 def graph_from_file(path, delimiter=" "):
