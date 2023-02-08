@@ -1,70 +1,33 @@
-import sys
-import functools
-import math
-import threading
-import time
 import logging
-
-import matplotlib.pyplot as plt
-import numpy as np
+import sys
+import time
+from functools import partial
+from multiprocessing import Pool
 
 from irma.max_queue import MaxQueue
-import irma.utils as utils
 
 logging.basicConfig(stream=sys.stdout, format='%(asctime)s - %(message)s', level=logging.DEBUG)
 
-class Pair:
-    def __init__(self, a, b):
-        self.a = a
-        self.b = b
-        self.recommends = 0
-        self.log_degree_sum = 0
-        self.degree_sum = 0
 
-    def __key(self):
-        return str(self.a) + ',' + str(self.b)
+def count_mark_process(lst, g1, g2):
+    results_dict = {}
+    for (a, b) in lst:
+        for graph1Neighbor in g1[a]:
+            for graph2Neighbor in g2[b]:
+                p = (graph1Neighbor, graph2Neighbor)
+                if p in results_dict:
+                    results_dict[p] += 1
+                else:
+                    results_dict[p] = 1
 
-    def __eq__(self, other):
-        return (self.a == other.a) and (self.b == other.b)
-
-    def __hash__(self):
-        return hash(self.__key())
-
-
-class Plots:
-    def __init__(self):
-        self.success_rate = []
-        self.correct_pairs_order = []
-        self.wrong_pairs_order = []
-        self.correct_map_degree = []
-        self.wrong_map_degree = []
-        self.correct_map_log_degree = []
-        self.wrong_map_log_degree = []
-        self.correct_map_recommends = []
-        self.wrong_map_recommends = []
-        self.correct_map_pos = []
-        self.wrong_map_pos = []
-
-
-def generic_plot(x, y, title, file_name):
-    # plt.title(title, fontdict={'fontsize': 22, 'fontname': 'Times New Roman'})
-    plt.xlabel(x, fontsize=18, fontname="Times New Roman")
-    plt.ylabel(y, fontsize=18, fontname="Times New Roman")
-    plt.legend(loc="best")
-
-    plt.savefig(file_name, format='eps')
-    plt.clf()
+    return results_dict
 
 
 class Irma:
     def __init__(self, graph1, graph2, sources, nodes_to_match,
-                 draw_dir="./plots",
-                 graph1s_candidates={},
-                 graph2s_candidates={},
                  parallel=False,
-                 max_queue=1e8,
+                 max_queue=-1,
                  threads=5,
-                 smooth=50,
                  verbose=True):
 
         self.A, self.Z = set(), set()
@@ -74,19 +37,17 @@ class Irma:
 
         self.parallel = parallel
         self.threads = threads
-        self.draw_dir = draw_dir
-        self.smooth = smooth
 
         self.start = time.time()
         self.verbose = verbose
 
-        self.plots = Plots()
+        self.marks_dict = {}
         self.queue = MaxQueue(max_size=max_queue)
-        self.prev_queue = MaxQueue(max_size=max_queue)
+        self.prev_queue = None
+
         self.M, self.unM = {}, {}
         self.pairs_dic = {}
         self.nodes_to_match = nodes_to_match
-        self.graph1s_candidates, self.graph2s_candidates = graph1s_candidates, graph2s_candidates
         self.f1_array, self.recall_array, self.precision_array, self.count_edges_array = [], [], [], []
         self.times, self.M_size = [], []
 
@@ -94,50 +55,98 @@ class Irma:
         if self.verbose:
             logging.info(msg)
 
+    def add_mark(self, a, b, num=1):
+        p = (a, b)
+        if p in self.marks_dict:
+            self.marks_dict[p] += num
+        else:
+            self.marks_dict[p] = num
+
+        if self.queue.contains(p):
+            self.queue.addToPriority(1000 * num, p)
+        else:
+            simple_delta_deg = abs(len(self.graph1[a]) - len(self.graph2[b]))
+            self.queue.push(1000 * num - simple_delta_deg, p)
+
+    def spread_marks(self, lst):
+        for (a, b) in lst:
+            self.Z.add((a, b))
+            for graph1Neighbor in self.graph1[a]:
+                for graph2Neighbor in self.graph2[b]:
+                    self.add_mark(graph1Neighbor, graph2Neighbor)
+
     def expand_when_stuck(self):
         if self.parallel:
             return self.expand_when_stuck_parallel()
         threshold = 1000
         count_loops = 0
         self.load_sources()
-        while len(self.A) != 0:
+        while self.A:
             count_loops += 1
+            self.spread_marks(self.A)
 
-            self.spread_array_marks_parallel(list(self.A))
-            while self.candidate_in_queues(threshold):
-                pair = self.best_candidate()
-                if pair.a not in self.M and pair.b not in self.unM:
-                    self.add_pair_to_map(pair)
-                    if pair not in self.Z:
-                        self.spread_pair_marks(pair)
-                        self.Z.add(pair)
+            while not self.queue.isEmpty() and self.queue.top()[0] > threshold:
+                p = (a, b) = self.queue.pop()[1]
+                if a not in self.M and b not in self.unM:
+                    self.add_pair_to_map(a, b)
+                    if p not in self.Z:
+                        self.spread_marks([p])
 
-            self.vprint(f"end of while {count_loops}. time: {round(time.time() - self.start, 1)}")
             self.update_A()
+            self.vprint(f"end of while {count_loops}. time: {round(time.time() - self.start, 1)}")
+
         return self.M
+
+    def spread_array_marks_parallel(self, pairs, insert_to_queue=True):
+        # need to insert to Z, and to the Queue.
+        num = self.threads
+        # replace with split
+        maps = [[] for _ in range(num)]
+        for i in range(len(pairs)):
+            maps[i % num].append(pairs[i])
+
+        pool = Pool(processes=self.threads)
+        results = pool.map(partial(count_mark_process, g1=self.graph1, g2=self.graph2), maps)
+
+        self.Z = self.Z.union(pairs)
+
+        if insert_to_queue:
+            for dict_ in results:
+                for pair, recommends in dict_.items():
+                    self.add_mark(pair[0], pair[1], recommends)
+        else:
+            for dict_ in results:
+                for pair, recommends in dict_.items():
+                    if pair in self.marks_dict:
+                        self.marks_dict[pair] += recommends
+                    else:
+                        self.marks_dict[pair] = recommends
 
     def expand_when_stuck_parallel(self):
         last_maps = []
         threshold = 1000
         count_loops = 0
         self.load_sources()
-        while len(self.A) != 0:
+        while self.A:
             count_loops += 1
+
             self.spread_array_marks_parallel(list(self.A))
-            while self.candidate_in_queues(threshold) or len(last_maps) > 0:
-                if not self.candidate_in_queues(threshold):
+
+            while last_maps or (not self.queue.isEmpty() and self.queue.top()[0] > threshold):
+                if self.queue.isEmpty() or self.queue.top()[0] <= threshold:
                     self.spread_array_marks_parallel(last_maps)
                     last_maps = []
                     continue
-                pair = self.best_candidate()
-                if pair.a not in self.M and pair.b not in self.unM:
-                    self.add_pair_to_map(pair)
-                    if pair not in self.Z:
-                        last_maps.append(Pair(pair.a, pair.b))
-                        self.Z.add(pair)
 
-            self.vprint(f"end of while {count_loops}. time: {round(time.time() - self.start, 1)}")
+                p = (a, b) = self.queue.pop()[1]
+                if a not in self.M and b not in self.unM:
+                    self.add_pair_to_map(a, b)
+                    if p not in self.Z:
+                        last_maps.append(p)
+
             self.update_A()
+            self.vprint(f"end of while {count_loops}. time: {round(time.time() - self.start, 1)}")
+
         return self.M
 
     def repairing_iteration(self, noisy_loop):
@@ -147,13 +156,13 @@ class Irma:
         time_start_loop = time.time()
         threshold = 0 if noisy_loop else 1000
         self.load_sources()
-        self.spread_array_marks_parallel(list(self.A))
+        self.spread_marks(list(self.A))
 
         while self.candidate_in_queues(threshold):
-            pair = self.best_candidate()
-            if pair.a not in self.M and pair.b not in self.unM:
-                self.add_pair_to_map(pair)
-                self.spread_pair_marks(pair)
+            p = (a, b) = self.best_candidate()
+            if a not in self.M and b not in self.unM:
+                self.add_pair_to_map(a, b)
+                self.spread_marks([p])
 
         self.vprint(f"end of loop. time: {round(time.time() - self.start, 1)}."
                     f" took {round(time.time() - time_start_loop, 1)} sec")
@@ -164,142 +173,52 @@ class Irma:
         threshold = 0 if noisy_loop else 1000
         self.load_sources()
         while self.candidate_in_queues(threshold):
-            pair = self.best_candidate()
-            if pair.a not in self.M and pair.b not in self.unM:
-                self.add_pair_to_map(pair)
-        pairs_array = [Pair(a, self.M[a]) for a in self.M]
-        self.pairs_dic = self.count_marks_parallel(pairs_array)
+            a, b = self.best_candidate()
+            if a not in self.M and b not in self.unM:
+                self.add_pair_to_map(a, b)
+
+        self.marks_dict.clear()
+        self.spread_array_marks_parallel(list(self.M.items()), insert_to_queue=False)
 
         self.vprint(
             f"end of loop. time: {time.time() - self.start}. took {round(time.time() - time_start_loop, 1)} sec")
         return self.M
 
-    def spread_array_marks(self, pairs_array):
-        for pair in pairs_array:
-            self.spread_pair_marks(pair)
-
-    def spread_array_marks_parallel(self, pairs_array):
-        new_marks = self.count_marks_parallel(pairs_array)
-        for node1 in new_marks:
-            for node2 in new_marks[node1]:
-                self.add_mark(Pair(node1, node2), new_marks[node1][node2].recommends)
-
-    def count_marks_parallel(self, new_maps):
-        num = self.threads
-        results, threads = [0] * num, [0] * num
-        maps = [[] for i in range(num)]
-        for i in range(len(new_maps)):
-            maps[i % num].append(new_maps[i])
-        for i in range(num):
-            threads[i] = threading.Thread(target=self.every_thread, args=(results, maps[i], i,))
-            threads[i].start()
-        for i in range(num):
-            threads[i].join()
-        all_keys = functools.reduce(set.union, map(set, map(dict.keys, results)))
-
-        new_pairs_dic = {}
-        all_pairs_array = []
-        for key in all_keys:
-            new_pairs_dic[key] = {}
-            results_key = [dict_i[key] if key in dict_i else {} for dict_i in results]
-            all_pairs_for_key = functools.reduce(set.union, map(set, map(dict.keys, results_key)))
-            for pair in all_pairs_for_key:
-                sum = 0
-                for result in results:
-                    if key in result:
-                        if pair in result[key]:
-                            sum += result[key][pair]
-                my_pair = Pair(key, pair)
-                my_pair.recommends = sum
-                new_pairs_dic[key][pair] = my_pair
-                delta_degree = abs(len(self.graph1[key]) - len(self.graph2[pair]))
-                priority = 1000 * my_pair.recommends - delta_degree
-                all_pairs_array.append((priority, my_pair))
-        return new_pairs_dic
-
-    def every_thread(self, results, chunk, thread_num):
-        result = {}
-        for pair in chunk:
-            for graph1Neighbor in self.graph1[pair.a]:
-                if graph1Neighbor not in result:
-                    result[graph1Neighbor] = {}
-                for graph2Neighbor in self.graph2[pair.b]:
-                    if self.is_sync_with_candidates(graph1Neighbor, graph2Neighbor):
-                        if graph2Neighbor not in result[graph1Neighbor]:
-                            result[graph1Neighbor][graph2Neighbor] = 0
-                        result[graph1Neighbor][graph2Neighbor] += 1
-        results[thread_num] = result
-
-    def spread_pair_marks(self, recommends_pair):
-        for graph1Neighbor in self.graph1[recommends_pair.a]:
-            for graph2Neighbor in self.graph2[recommends_pair.b]:
-                if self.is_sync_with_candidates(graph1Neighbor, graph2Neighbor):
-                    pair_to_update = Pair(graph1Neighbor, graph2Neighbor)
-                    self.add_mark(pair_to_update)
-
-    def is_sync_with_candidates(self, node1, node2):
-        if node1 in self.graph1s_candidates and node2 not in self.graph1s_candidates[node1]:
-            return False
-        if node2 in self.graph2s_candidates and node1 not in self.graph2s_candidates[node2]:
-            return False
-        return True
-
-    def add_mark(self, pair, num=1):
-        if pair.a not in self.pairs_dic:
-            self.pairs_dic[pair.a] = {}
-        if pair.b not in self.pairs_dic[pair.a]:
-            self.pairs_dic[pair.a][pair.b] = pair
-        else:
-            pair = self.pairs_dic[pair.a][pair.b]
-        pair.recommends += num
-
-        if self.queue.contains(pair):
-            self.queue.addToPriority(1000 * num, pair)
-        else:
-            simple_delta_deg = abs(len(self.graph1[pair.a]) - len(self.graph2[pair.b]))
-            self.queue.push(1000 * num - simple_delta_deg, pair)
-
     def update_A(self):
-        self.A = set()
-        for a in self.M:
-            b = self.M[a]
+        self.A.clear()
+        # maybe this is all the pairs in the queue?
+        for a, b in self.M.items():
             for graph1Neighbor in self.graph1[a]:
                 if graph1Neighbor not in self.M:
                     for graph2Neighbor in self.graph2[b]:
                         if graph2Neighbor not in self.unM:
-                            if Pair(graph1Neighbor, graph2Neighbor) not in self.Z:
-                                pair = Pair(graph1Neighbor, graph2Neighbor)
-                                self.A.add(pair)
-                                self.Z.add(pair)
+                            if (graph1Neighbor, graph2Neighbor) not in self.Z:
+                                self.A.add((graph1Neighbor, graph2Neighbor))
 
     def load_sources(self):
         for source in self.sources:
             self.M[source] = source
             self.unM[source] = source
-            pair = Pair(source, source)
-            self.A.add(pair)
-            self.Z.add(pair)
+            self.A.add((source, source))
 
-    def add_pair_to_map(self, pair):
-        # self.update_plots(pair)
-        self.M[pair.a] = pair.b
-        self.unM[pair.b] = pair.a
+    def add_pair_to_map(self, a, b):
+        self.M[a] = b
+        self.unM[b] = a
 
     def prepare_to_iteration(self):
         self.A, self.Z = set(), set()
-        self.plots = Plots()
+        del self.queue
         self.queue = MaxQueue()
         self.M, self.unM = {}, {}
-        self.prev_queue = self.create_queue_by_pairs_dic(self.pairs_dic)
-        self.pairs_dic = {}
+        self.prev_queue = self.create_queue_by_marks_dict()
+        self.marks_dict.clear()
 
-    def create_queue_by_pairs_dic(self, pairs_dic):
+    def create_queue_by_marks_dict(self):
         pairs_array = []
-        for key1, dic in pairs_dic.items():
-            for key2, pair in dic.items():
-                delta_deg = abs(len(self.graph1[pair.a]) - len(self.graph2[pair.b]))
-                priority = pair.recommends * 1000 - delta_deg
-                pairs_array.append((priority, pair))
+        for (a, b), marks in self.marks_dict.items():
+            delta_deg = abs(len(self.graph1[a]) - len(self.graph2[b]))
+            priority = marks * 1000 - delta_deg
+            pairs_array.append((priority, (a, b)))
         return MaxQueue(pairs_array)
 
     def candidate_in_queues(self, threshold):
@@ -316,84 +235,6 @@ class Irma:
         else:
             pop = self.queue.pop()
         return pop[1]
-
-    def update_plots(self, pair, pos=-1):
-        val = 1 if pair.a == pair.b else 0
-        if pos == -1:
-            pos = len(self.M) - len(self.sources)
-        self.plots.success_rate.append(val)
-        self.initialize_pair_values(pair)
-
-        if val == 1:
-            self.plots.correct_pairs_order.append(pair)
-            self.plots.correct_map_pos.append(pos)
-            self.plots.correct_map_degree.append(pair.degree_sum / 2)
-            self.plots.correct_map_log_degree.append(pair.log_degree_sum / 2)
-            self.plots.correct_map_recommends.append(pair.recommends)
-        else:
-            self.plots.wrong_pairs_order.append(pair)
-            self.plots.wrong_map_pos.append(pos)
-            self.plots.wrong_map_degree.append(pair.degree_sum / 2)
-            self.plots.wrong_map_log_degree.append(pair.log_degree_sum / 2)
-            self.plots.wrong_map_recommends.append(pair.recommends)
-
-    def initialize_pair_values(self, pair):
-        pair.a_degree = len(self.graph1[pair.a])
-        pair.b_degree = len(self.graph2[pair.b])
-        log_degree_a = math.log(pair.a_degree + 1)
-        log_degree_b = math.log(pair.b_degree + 1)
-        pair.log_degree_sum = log_degree_a + log_degree_b
-        pair.degree_sum = pair.a_degree + pair.b_degree
-
-    def save_plots(self):
-        directory = self.draw_dir
-        smooth = self.smooth
-
-        good_pos = self.plots.correct_map_pos[0:len(utils.smooth(self.plots.correct_map_pos, smooth))]
-        smoothed_wrong_map_pos = utils.smooth(self.plots.wrong_map_pos, smooth, good_pos[-1])
-        last_pos = len(smoothed_wrong_map_pos)
-        bad_pos = self.plots.wrong_map_pos[0:last_pos]
-
-        degs = [len(self.graph1[a]) for a in self.graph1]
-        deg_counter = (np.array(degs).max() + 1) * [0]
-        for deg in degs:
-            deg_counter[deg] += 1
-        for i in range(len(deg_counter)):
-            deg_counter[i] /= len(self.graph1)
-
-        plt.plot(deg_counter)
-        x, y, title, file_name = "Degree", "Frequency ", "Degree distribution", directory + "Degree distribution"
-        generic_plot(x, y, title, file_name)
-
-        plt.plot(utils.smooth(self.plots.success_rate, 30))
-        x, y, title, file_name = "Time", "Percents", "Precision (sliding window of 30)", directory + "success percent"
-        generic_plot(x, y, title, file_name)
-
-        plt.plot(good_pos, utils.smooth(self.plots.correct_map_log_degree, smooth), label='Correct pairs', alpha=0.7)
-        plt.plot(bad_pos, utils.smooth(self.plots.wrong_map_log_degree, smooth), label='Wrong pairs', alpha=0.7)
-        x, y, title, file_name = "Time", "Log degree", "Log degree of mapped pairs by order of insertion", directory + "Log degree"
-        generic_plot(x, y, title, file_name)
-
-        plt.plot(good_pos, utils.smooth(self.plots.correct_map_degree, smooth), label='Correct pairs', alpha=0.7)
-        plt.plot(bad_pos, utils.smooth(self.plots.wrong_map_degree, smooth), label='Wrong pairs', alpha=0.7)
-        x, y, title, file_name = "Time", "Degree", "Degree of mapped pairs by order of insertion", directory + "degree"
-        generic_plot(x, y, title, file_name)
-
-        log_correct_recommends = [math.log(a) for a in utils.smooth(self.plots.correct_map_recommends, smooth)]
-        log_wrong_recommends = [math.log(a) for a in utils.smooth(self.plots.wrong_map_recommends, smooth)]
-        plt.plot(good_pos, log_correct_recommends, label='correct pairs', alpha=0.7)
-        plt.plot(bad_pos, log_wrong_recommends, label='wrong pairs', alpha=0.7)
-        x, y, title, file_name = "Time", "Marks", "Marks of mapped pairs by order of insertion", directory + "Marks"
-        generic_plot(x, y, title, file_name)
-
-        correct_end_recommends = [pair.recommends for pair in self.plots.correct_pairs_order]
-        wrong_end_recommends = [pair.recommends for pair in self.plots.wrong_pairs_order]
-        log_correct = [math.log(a) for a in utils.smooth(correct_end_recommends, smooth)]
-        log_wrong = [math.log(a) for a in utils.smooth(wrong_end_recommends, smooth)]
-        plt.plot(good_pos, log_correct, label='correct pairs', alpha=0.7)
-        plt.plot(bad_pos, log_wrong, label='wrong pairs', alpha=0.7)
-        x, y, title, file_name = "Time", "Marks", "Marks of at the end by order of insertion", directory + "Marks_end"
-        generic_plot(x, y, title, file_name)
 
     def evaluate(self):
         count_correct = 0
@@ -432,38 +273,12 @@ class Irma:
 
         return count_correct
 
-    def draw_graph(self, loop, proj, noisy_loop):
-        for u in self.graph1:
-            if u not in proj:
-                continue
-            if u not in self.M:
-                color = 'gray'
-            else:
-                color = 'green' if self.M[u] == u else 'red'
-            c = plt.Circle((proj[u][0], proj[u][1]), 0.015, color=color, alpha=0.5)
-            plt.gca().add_patch(c)
-            for v in self.graph1[u]:
-                if v not in proj:
-                    continue
-                plt.plot([proj[u][0], proj[v][0]], [proj[u][1], proj[v][1]], color='gray', alpha=0.1)
-        iteration = "ExpandWhenStuck" if loop == 0 else f"Iteration {loop}"
-        if noisy_loop:
-            iteration += " (noisy)"
-        plt.title(f"{iteration}, recall={self.recall_array[-1]}, precision={self.precision_array[-1]}")
-        plt.savefig(self.draw_dir + f"/visual_map{loop}")
-        plt.clf()
-
     def run(self, allow_noisy_loops=True, noisy_delta=0.02, max_num_of_iterations=100,
-                 min_delta=0.02):
+            min_delta=-1):
         """
 
         Parameters
         ----------
-        stopping_condition:
-            -1: the original algorithm
-            0: only expandWhenStuck
-            (0,1): stop when the improvement small then 1+ stopping condition
-            1<: number of iterations
         allow_noisy_loops
         noisy_delta
         min_delta

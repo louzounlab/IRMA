@@ -2,8 +2,7 @@ import os
 import json
 import pickle
 
-import utils
-from IRMA import IRMA
+from irma import Irma, utils
 
 DIR = "./results_pkl"
 
@@ -28,12 +27,12 @@ for seed in seed_sizes:
     for _ in range(10):
         file_path = params["graphs_directory"] + params["file_graphs"][graph_num]
         overlap = 0.6
-        graph1, graph2, sources, nodes_to_match = utils.generate_file_graphs(file_path, overlap, seed)
+        graph1, graph2, sources, nodes_to_match = utils.generate_file_graphs(file_path, overlap, seed, nodes_overlap=0.7)
 
         candidates = {}
 
-        myIRMA = IRMA(graph1, graph2, sources, nodes_to_match, graph1s_candidates=candidates)
-        myIRMA.run_IRMA()
+        myIRMA = Irma(graph1, graph2, sources, nodes_to_match, graph1s_candidates=candidates)
+        myIRMA.run()
 
         f1_results[seed].append(myIRMA.f1_array)
         recall_results[seed].append(myIRMA.recall_array)

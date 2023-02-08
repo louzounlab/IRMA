@@ -73,13 +73,17 @@ def print_graphs_info(graph, graph1, graph2, params, sources):
     return graph1, graph2, sources, params, nodes_to_match
 
 
-def generate_graphs(params):
-    # graph = networkx.powerlaw_cluster_graph(params["nodes"], m=int(params["avg_deg"] * 0.5), p=0.1)
-    graph = networkx.erdos_renyi_graph(params["nodes"], params["avg_deg"] / params["nodes"])
-    s = params["graphs-overlap"]
-    graph1, graph2 = remove_networkx_edges(graph, s)
-    sources = choose_seeds2(graph1, graph2, params["seed_size"])
-    return print_graphs_info(graph, graph1, graph2, params, sources)
+def generate_graphs(nodes, avg_deg, seed_size, edge_overlap, node_overlap):
+    graph = networkx.erdos_renyi_graph(nodes, avg_deg / nodes)
+    graph1, graph2 = remove_networkx_edges(graph, edge_overlap, node_overlap)
+    seeds = choose_seeds2(graph1, graph2, seed_size)
+
+    nodes_to_match = 0
+    for node in graph:
+        if graph1.has_node(node) and graph2.has_node(node):
+            nodes_to_match += 1
+
+    return graph1, graph2, seeds, nodes_to_match
 
 
 def remove_networkx_edges(graph, s, t=1):
