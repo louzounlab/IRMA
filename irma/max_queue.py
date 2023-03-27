@@ -12,13 +12,17 @@
 """Priority queue class with updatable priorities.
 """
 
-import heapq
+import time
 
-__all__ = ['MappedQueue']
+__all__ = ['MappedQueue', 'MaxQueue']
 
 class MaxQueue(object):
-    def __init__(self, data=None):
+    def __init__(self, data=None, max_size=-1):
         """Priority queue class with updatable priorities.
+        The queue can be with fixed size, according to the parameter max_size.
+        In case the length of the queue grow beyond max_size,
+        the smallest elements (20% of all the elements) in the queue got deleted.
+        For usual max-queue (without fixed size) you might use max_size = -1.
         """
         if data is None:
             data = []
@@ -26,6 +30,7 @@ class MaxQueue(object):
             temp = data[i]
             data[i] = (-1*temp[0], temp[1])
         self.mapped_queue = MappedQueue(data)
+        self.max_size = max_size
 
     def __len__(self):
         return len(self.mapped_queue)
@@ -45,6 +50,9 @@ class MaxQueue(object):
         return return_value
 
     def push(self, priority, key):
+        if self.max_size != -1 and len(self.mapped_queue) >= self.max_size:
+            self.mapped_queue.remove_biggest_elements(int(self.max_size * 0.2))
+
         return self.mapped_queue.push(-1 * priority, key)
 
     def top(self):
@@ -110,7 +118,6 @@ class MappedQueue(object):
     def __len__(self):
         return len(self.h)
 
-
     def _heapify(self):
         """Restore heap invariant and recalculate map."""
         self.heapify()
@@ -136,7 +143,7 @@ class MappedQueue(object):
         return self.h[self.d[key]]
 
     def push(self, priority, key):
-        #priority = -priority
+        # priority = -priority
         elt = (priority, key)
         """Add an element to the queue."""
         # If element is already in queue, do nothing
@@ -152,14 +159,14 @@ class MappedQueue(object):
 
     def top(self):
         elt = self.h[0]
-        #returnElt = (-elt[0], elt[1])
+        # returnElt = (-elt[0], elt[1])
         return elt
 
     def pop(self):
         """Remove and return the smallest element in the queue."""
         # Remove smallest element
         elt = self.h[0]
-        #returnElt = (-elt[0], elt[1])
+        # returnElt = (-elt[0], elt[1])
         del self.d[elt[1]]
         # If elt is last item, remove and return
         if len(self.h) == 1:
@@ -179,7 +186,7 @@ class MappedQueue(object):
         if key not in self.d:
             self.push(priority, key)
         else:
-            #Mpriority = -priority
+            # Mpriority = -priority
             new = (priority, key)
             """Replace an element in the queue with a new one."""
             # Replace
@@ -210,6 +217,17 @@ class MappedQueue(object):
         # Restore invariant by sifting up, then down
         pos = self._siftup(pos)
         self._siftdown(pos)
+
+    def remove_biggest_elements(self, num: int):
+        start = time.time()
+        self.h.sort(key=lambda x: x[0])
+        pos = len(self.h) - num
+        if pos > 0:
+            del self.h[pos:]
+
+        del self.d
+        self.d = {key: index for index, (_, key) in enumerate(self.h)}
+        print(f"--- clean heap: {time.time() - start}")
 
     def heapify(self):
         """Transform list into a heap, in-place, in O(len(x)) time."""
