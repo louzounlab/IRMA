@@ -12,9 +12,6 @@ setup(
     python_requires='>=3.6',
     packages=find_packages(include=['irma']),
     install_requires=[
-        'matplotlib',
-        'numpy',
         'networkx',
-        'numpy'
     ]
 )

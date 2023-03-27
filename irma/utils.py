@@ -2,9 +2,8 @@ import math
 import random
 
 import networkx
-import numpy as np
 
-import irma.max_queue
+from irma.max_queue import MaxQueue
 
 
 def graph_from_file(path, delimiter=" "):
@@ -35,25 +34,25 @@ def generate_file_graphs(graph_path: str, edges_overlap: float, seed_size: float
     return graph1, graph2, seed_nodes, nodes_to_match
 
 
-def create_proj(graph):
-    A = StaticEmbeddings(name="moshe", G=graph, initial_size=20, initial_method="node2vec", method="OGRE", H=None,
-                         dim=2)
-
-    proj = A.list_dicts_embedding[0]
-    new_proj = {}
-    x = np.array([proj[node][0] for node in proj])
-    y = np.array([proj[node][1] for node in proj])
-    min0 = np.percentile(x, 5)
-    max0 = np.percentile(x, 95)
-    min1 = np.percentile(y, 5)
-    max1 = np.percentile(y, 95)
-    for node in proj:
-        if proj[node][0] < min0 or proj[node][0] > max0 or proj[node][1] < min1 or proj[node][1] > max1:
-            continue
-        a = (proj[node][0] - min0) / (max0 - min0)
-        b = (proj[node][1] - min1) / (max1 - min1)
-        new_proj[node] = [a, b]
-    return new_proj
+# def create_proj(graph):
+#     A = StaticEmbeddings(name="moshe", G=graph, initial_size=20, initial_method="node2vec", method="OGRE", H=None,
+#                          dim=2)
+#
+#     proj = A.list_dicts_embedding[0]
+#     new_proj = {}
+#     x = np.array([proj[node][0] for node in proj])
+#     y = np.array([proj[node][1] for node in proj])
+#     min0 = np.percentile(x, 5)
+#     max0 = np.percentile(x, 95)
+#     min1 = np.percentile(y, 5)
+#     max1 = np.percentile(y, 95)
+#     for node in proj:
+#         if proj[node][0] < min0 or proj[node][0] > max0 or proj[node][1] < min1 or proj[node][1] > max1:
+#             continue
+#         a = (proj[node][0] - min0) / (max0 - min0)
+#         b = (proj[node][1] - min1) / (max1 - min1)
+#         new_proj[node] = [a, b]
+#     return new_proj
 
 
 def print_graphs_info(graph, graph1, graph2, params, sources):
@@ -135,7 +134,7 @@ def example_candidates(graph1):
 
 def choose_high_deg_sources(graph, graph1, graph2, percent):
     num = math.ceil(percent * len(graph.nodes)) if percent < 1 else percent
-    queue = myQueue.MaxQueue()
+    queue = MaxQueue()
     for node in graph1:
         if node not in graph2:
             continue

@@ -46,10 +46,10 @@ class Irma:
         self.prev_queue = None
 
         self.M, self.unM = {}, {}
-        self.pairs_dic = {}
         self.nodes_to_match = nodes_to_match
         self.f1_array, self.recall_array, self.precision_array, self.count_edges_array = [], [], [], []
         self.times, self.M_size = [], []
+
 
     def vprint(self, msg):
         if self.verbose:
@@ -245,10 +245,12 @@ class Irma:
         recall = count_correct / self.nodes_to_match
         f1 = 2 * recall * precision / (recall + precision)
 
+        # weight
         count_edges = 0
         for v in self.graph1:
             if v not in self.M:
                 continue
+            # All (u,v) in E1  and v in M
             for u in self.graph1[v]:
                 if u in self.M and self.M[v] in self.graph2[self.M[u]]:
                     count_edges += 1
@@ -279,12 +281,12 @@ class Irma:
 
         Parameters
         ----------
-        allow_noisy_loops
-        noisy_delta
-        min_delta
-        max_num_of_iterations
+        allow_noisy_loops - noisy loops is the exploring iteration of irma algorithms, iteration with threshold 1.
+        noisy_delta - minimum increasing in the weight (percents) before the exploring iteration
+        max_num_of_iterations - maximum number of iterations
+        min_delta - minimum increasing in the weight (percents) before stopping the algorithm
 
-        Return
+        Returns None
         -------
 
         """
